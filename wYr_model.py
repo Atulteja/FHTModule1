@@ -4,15 +4,19 @@ from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+import streamlit as st
 
 from generate_dataset import PROSPECTIVEDATA, QUESTIONNAIREDATA, ZURICHMOVEDATA, DATASET
 
 # calculate risk score
-def f_riskscore(df, path_model_info, n_std=4):
-    parameters, means, stddevs, wts, dirns = f_model_configurations(path_model_info)
+def f_riskscore(df, df_meta, n_std=4, parameters=None, means=None, stddevs=None, wts=None, dirns=None):
+    if parameters is None or means is None or stddevs is None or wts is None or dirns is None:
+        parameters, means, stddevs, wts, dirns = f_model_configurations(df_meta=None)
 
     df["risk score"] = 0
     for var, mean_vals in means.items():
+        if wts[var] == 0 or var not in df.columns:
+            continue 
         if dirns[var] == "<":
             th_low = mean_vals - (n_std * stddevs[var])
             df["point"] = df[var] < th_low
@@ -37,8 +41,10 @@ def f_riskscore(df, path_model_info, n_std=4):
     df = df.drop(["point"], axis=1)
     return df
 
-def f_model_configurations(path_model_info):
-    df_meta = pd.read_excel(paths['Model_information'], sheet_name="Thresholds")
+def f_model_configurations(df_meta = None):
+    if df_meta is None:
+        df_meta = pd.read_excel(paths["Model_information"], sheet_name="Thresholds")
+
     parameters = df_meta["Parameter"].values.tolist()
     optimum_thresholds_mean = {k: float(g["Mean/cutoff"]) for k, g in df_meta.groupby("Parameter")}
     optimum_thresholds_std = {k: float(g["StdDev"]) for k, g in df_meta.groupby("Parameter")}
@@ -76,56 +82,84 @@ def f_evaluate_predictions(df):
     aucroc_ = roc_auc_score(y_true, y_pred)
     return df, spec, sens, acc, yidx, plr, f1_, aucroc_
 
-def f_generate_TARGET_dataset(paths, num_followups=4):
-    # read ZM data
-    zm = ZURICHMOVEDATA(paths['ZM'])
-    zm.read_dataset()
-    print('zm dataset - shape:', zm.dataset.shape)
-
-    # read questionnaire data
-    questionnaire = QUESTIONNAIREDATA(paths['Questionnaires'], features=['Fall_2', 'Age', 'ICONFES_Score_Adjusted', 'IPAQ_Cat', 'MOCA_Score_Adjusted'])
-    questionnaire.read_dataset()
-    print('questionnaire dataset - shape:', questionnaire.dataset.shape)
-
-    missing_info_participants = []
-    for participant in zm.dataset["Participant"]:
-        if participant not in list(questionnaire.dataset["Participant"]):
-            missing_info_participants.append(participant)
+def f_generate_TARGET_dataset(uploaded_files: dict, use_ZM=False, use_QN=False, use_age_fall_history=False):
     
-    if len(missing_info_participants)>0:
-        print("Information missing for following participants:")
-        for i in range(len(missing_info_participants)):
-            print(missing_info_participants[i])
+    #Flags
+    has_ZM = 'ZM' in uploaded_files and uploaded_files['ZM'] is not None
+    has_QN = 'Questionnaire' in uploaded_files and uploaded_files['Questionnaire'] is not None
 
-    # construct the dataset (TARGET) - without followup information
+    # Validate inputs
+    if not (has_ZM or has_QN):
+        st.warning("Please upload at least one data file to proceed.")
+        return None
+    
+    df_ZM = None
+    df_QN = None
+
+    # Read ZM data
+    if use_ZM and has_ZM:
+        zm = ZURICHMOVEDATA(uploaded_files['ZM'])
+        zm.read_dataset()
+        df_ZM = zm.dataset
+        print('ZM dataset - shape:', df_ZM.shape)
+
+    # Read questionnaire data
+    if use_QN and use_age_fall_history and has_QN:
+        questionnaire = QUESTIONNAIREDATA(
+            uploaded_files['Questionnaire'],
+            features=['Fall_2', 'Age', 'ICONFES_Score_Adjusted', 'IPAQ_Cat', 'MOCA_Score_Adjusted']
+        )
+    elif use_QN and has_QN and not use_age_fall_history:
+        questionnaire = QUESTIONNAIREDATA(
+            uploaded_files['Questionnaire'],
+            features=['ICONFES_Score_Adjusted', 'IPAQ_Cat', 'MOCA_Score_Adjusted']
+        )
+    elif use_age_fall_history and has_QN and not use_QN:
+        questionnaire = QUESTIONNAIREDATA(
+            uploaded_files['Questionnaire'],
+            features=['Fall_2', 'Age']
+        )
+    else: 
+        questionnaire = None
+
+    if questionnaire is not None:    
+        questionnaire.read_dataset()
+        df_QN = questionnaire.dataset
+        print('Questionnaire dataset - shape:', df_QN.shape)
+
+    # Merge datasets
     target = DATASET()
-    target.merge_datasets(zm.dataset, questionnaire.dataset,
-                        {'first_dataset': 'Participant', 'second_dataset': 'Participant'})
-    print('TARGET dataset - shape:', target.dataset.shape)
-    target.dataset.dropna(inplace=True)
-    print('TARGET dataset - shape:', target.dataset.shape)
 
-    if num_followups>0 and len(paths['Prospective'])>0:
-        # read prospective data
-        followup = PROSPECTIVEDATA(paths['Prospective'])
-        followup.read_dataset()
-        followup.generate_labels(num_followups=num_followups)
-
-        # construct the dataset (TARGET) - with followup information
-        complete_dataset = DATASET()
-        complete_dataset.merge_datasets(target.dataset, followup.labels,
-                            {'first_dataset': 'Participant', 'second_dataset': 'Participant'})
-        complete_dataset.dataset.dropna(inplace=True)
-
-        print("---------------------------")
-        print(complete_dataset.dataset.label.value_counts())
-        print("---------------------------")
-
-        target = complete_dataset
+    if df_ZM is not None and df_QN is not None:
+        target.merge_datasets(df_ZM, df_QN, {'first_dataset': 'Participant', 'second_dataset': 'Participant'})
+    elif df_ZM is not None:
+        target.dataset = df_ZM
+    elif df_QN is not None:
+        target.dataset = df_QN   
     else:
-        print("Follow up information not incorporated")
+        st.warning("Please upload the selected data files to proceed.")
 
     return target
+
+    # if num_followups>0 and len(paths['Prospective'])>0:
+    #     # read prospective data
+    #     followup = PROSPECTIVEDATA(paths['Prospective'])
+    #     followup.read_dataset()
+    #     followup.generate_labels(num_followups=num_followups)
+
+    #     # construct the dataset (TARGET) - with followup information
+    #     complete_dataset = DATASET()
+    #     complete_dataset.merge_datasets(target.dataset, followup.labels,
+    #                         {'first_dataset': 'Participant', 'second_dataset': 'Participant'})
+    #     complete_dataset.dataset.dropna(inplace=True)
+
+    #     print("---------------------------")
+    #     print(complete_dataset.dataset.label.value_counts())
+    #     print("---------------------------")
+
+    #     target = complete_dataset
+    # else:
+    #     print("Follow up information not incorporated")
 
 def f_fall_history_model(paths, num_follow_ups):
     target = f_generate_TARGET_dataset(paths, num_follow_ups)
@@ -136,9 +170,12 @@ def f_fall_history_model(paths, num_follow_ups):
 if __name__ == "__main__":
 
     paths = {}
-    paths['ZM'] = "/Volumes/P2/16_Sai_Workfolder/Data_TARGET/Feb2025/TARGETZMParameters_All_20241015.xlsx"
-    paths['Questionnaires'] = "/Volumes/P2/16_Sai_Workfolder/Data_TARGET/Feb2025/TARGET 5 November 2024 dataset to SEC_051124 numeric n=2291.xlsx"
-    paths['Prospective'] = "/Volumes/P2/16_Sai_Workfolder/Data_TARGET/Feb2025/TARGET follow-up 18.02.2025 to SEC 26022025 numeric.xls"
-    paths["Model_information"] = "/Volumes/P2/16_Sai_Workfolder/wYr_model/wYr_thresholds.xlsx"
+    paths['ZM'] = "//1TB/Dataset_Feb2025/TARGETZMParameters_All_20241015.xlsx"
+    paths['Questionnaires'] = "/1TB/Dataset_Feb2025/TARGET 5 November 2024 dataset to SEC_051124 numeric n=2291.xlsx"
+    paths['Prospective'] = "/1TB/Dataset_Feb2025/TARGET follow-up 18.02.2025 to SEC 26022025 numeric.xls"
+    paths["Model_information"] = "/1TB/wYr_model/wYr_thresholds.xlsx"
 
     df, spec, sens, acc, yidx, plr, f1_, aucroc_  = f_fall_history_model(paths, 4)
+
+
+
