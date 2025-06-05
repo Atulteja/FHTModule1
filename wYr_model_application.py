@@ -84,6 +84,43 @@ if target is not None:
     st.download_button("Download Processed Data", data=csv_file, file_name="processed_data.csv", mime="text/csv")
 
 
+def plot_bar(metrics_dict, config_label):
+    labels = list(metrics_dict.keys())
+    values = list(metrics_dict.values())
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar(labels, values, color='skyblue')
+
+    for bar in bars:
+        height = bar.get_height()
+        ax.annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 5), textcoords="offset points",
+                    ha='center', va='bottom')
+
+    ax.set_ylim(0, 1)
+    ax.set_ylabel('Score')
+    ax.set_title(f"Evaluation Metrics for {config_label}")
+    plt.xticks(rotation=30)
+    plt.tight_layout()
+    return fig
+
+df_eval = pd.read_excel("Evaluation_metrics.xlsx", sheet_name="Sheet1")
+
+config_key = f"ZM={int(use_ZM)}_QN={int(use_QN)}_AF={int(use_age_fall_history)}"
+
+row = df_eval[df_eval["Config"] == config_key]
+
+selected_metrics = ["Specificity", "Sensitivity", "Accuracy", "F1", "AUC-ROC"]
+if not row.empty:
+    metrics = row[selected_metrics].iloc[0].to_dict()
+
+    st.subheader("Evaluation Metrics Bar Chart")
+    fig = plot_bar(metrics, config_key)
+    st.pyplot(fig)
+else:
+    st.info("No evaluation metrics available for this combination.")
+
+
 
 
 
