@@ -119,7 +119,6 @@ def genetic_algorithm(initial_population, population_size, generations, mutation
 
 
 
-
 if __name__ == "__main__":
 
 
@@ -155,4 +154,3 @@ if __name__ == "__main__":
 
     print("Best Weights:", best_weights)
     print("Best Fitness:", best_fitness)
-
