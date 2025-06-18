@@ -145,7 +145,7 @@ def inject_immigrants(population, empirical_weights, num_immigrants=10):
     """Inject random individuals to maintain diversity"""
     immigrants = []
     for _ in range(num_immigrants):
-        immigrant = empirical_weights + np.random.randint(-8, 9, size=len(empirical_weights))
+        immigrant = empirical_weights + np.random.randint(-9, 10, size=len(empirical_weights))
         immigrant = np.clip(immigrant, 0, 100)
         immigrants.append(immigrant)
     
@@ -243,7 +243,7 @@ def genetic_algorithm_improved(initial_population, population_size, generations,
             population[:num_keep] = population[elite_indices[:num_keep]]
             # Regenerate the rest
             for i in range(num_keep, population_size):
-                new_individual = initial_population + np.random.randint(-10, 11, size=len(initial_population))
+                new_individual = initial_population + np.random.randint(-12, 13, size=len(initial_population))
                 population[i] = np.clip(new_individual, 0, 100)
             stagnation_counter = 0
     
@@ -270,9 +270,9 @@ if __name__ == "__main__":
 
     best_weights, best_fitness, fitness_history, diversity_history = genetic_algorithm_improved(
         initial_population=empirical_weights,
-        population_size=150,  # Increased population size
+        population_size=200,  # Increased population size
         generations=400,
-        base_mutation_rate=0.15,  # Slightly reduced base rate since it's now adaptive
+        base_mutation_rate=0.20,  # Slightly reduced base rate since it's now adaptive
         df_base=df_base,
         parameters=parameters,
         mean_vals=mean_vals,

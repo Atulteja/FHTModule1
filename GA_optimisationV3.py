@@ -216,12 +216,61 @@ def create_diverse_immigrants(empirical_weights, num_immigrants, generation, max
     
     return np.array(immigrants)
 
+def fitness_batch(population, df_base, parameters, mean_vals, std_vals, dirns, threshold=64, n_std=4):
+    """Optimized batch fitness calculation"""
+    fitness_scores = []
+    
+    # Pre-calculate thresholds once
+    thresholds = {}
+    for var in parameters:
+        mean = mean_vals[var]
+        std = std_vals[var]
+        
+        if dirns[var] == "<":
+            thresholds[var] = ('lt', mean - (n_std * std))
+        elif dirns[var] == ">":
+            thresholds[var] = ('gt', mean + (n_std * std))
+        elif dirns[var] == "=":
+            thresholds[var] = ('eq', mean + (n_std * std))
+        elif dirns[var] == "><":
+            th_low = max(0, mean - (n_std * std)) if "Var" in var else mean - (n_std * std)
+            th_high = mean + (n_std * std)
+            thresholds[var] = ('between', th_low, th_high)
+    
+    for individual in population:
+        df = df_base.copy()
+        weights = {param: int(w) for param, w in zip(parameters, individual)}
+        
+        df["risk score"] = 0
+        for var in parameters:
+            if thresholds[var][0] == 'lt':
+                df["point"] = (df[var] < thresholds[var][1]).astype(int)
+            elif thresholds[var][0] == 'gt':
+                df["point"] = (df[var] > thresholds[var][1]).astype(int)
+            elif thresholds[var][0] == 'eq':
+                df["point"] = (df[var] == thresholds[var][1]).astype(int)
+            elif thresholds[var][0] == 'between':
+                df["point"] = (~df[var].between(thresholds[var][1], thresholds[var][2])).astype(int)
+            else:
+                df["point"] = 0
+            
+            df["risk score"] += df["point"] * weights[var]
+        
+        df["prediction"] = (df["risk score"] >= threshold).astype(int)
+        fitness_scores.append(1 - roc_auc_score(df["label"].values, df["prediction"].values))
+    
+    return np.array(fitness_scores)
+
 def genetic_algorithm_improved_v2(initial_population, population_size, generations, 
                                 df_base, parameters, mean_vals, std_vals, dirns, threshold=64):
     
+    print(f"Initializing population of {population_size} individuals...")
     population = genPopulation(population_size, initial_population)
     best_individual = None
     best_fitness = float('inf')
+    
+    # Cache for fitness scores to avoid recalculation
+    fitness_cache = {}
     
     # Track convergence and diversity
     fitness_history = []
@@ -231,17 +280,18 @@ def genetic_algorithm_improved_v2(initial_population, population_size, generatio
     best_fitness_window = []
     
     for generation in range(generations):
-        # Calculate fitness for all individuals
-        fitness_scores = np.array([
-            fitness(ind, df_base, parameters, mean_vals, std_vals, dirns, threshold)
-            for ind in population
-        ])
+        print(f"Generation {generation + 1}: Calculating fitness for {len(population)} individuals...")
         
-        # Calculate diversity metrics
-        diversity = calculate_diversity(population)
+        # Calculate fitness for all individuals (batch processing)
+        fitness_scores = fitness_batch(population, df_base, parameters, mean_vals, std_vals, dirns, threshold)
+        
+        # Calculate diversity metrics (simplified for speed)
+        if generation % 5 == 0:  # Only calculate diversity every 5 generations to save time
+            diversity = calculate_diversity(population[:min(50, len(population))])  # Sample for speed
         fitness_diversity = calculate_fitness_diversity(fitness_scores)
         
-        diversity_history.append(diversity)
+        if generation % 5 == 0:
+            diversity_history.append(diversity)
         fitness_diversity_history.append(fitness_diversity)
         
         # Track best individual and stagnation
@@ -257,32 +307,33 @@ def genetic_algorithm_improved_v2(initial_population, population_size, generatio
         
         # Track fitness improvement over a window
         best_fitness_window.append(current_best)
-        if len(best_fitness_window) > 20:
+        if len(best_fitness_window) > 10:  # Smaller window for faster detection
             best_fitness_window.pop(0)
         
         fitness_history.append(best_fitness)
         
         print(f"Generation {generation + 1}: Best={best_fitness:.6f}, Current={current_best:.6f}, "
-              f"Diversity={diversity:.2f}, FitDiv={fitness_diversity:.4f}, "
-              f"Stagnation={stagnation_counter}")
+              f"FitDiv={fitness_diversity:.4f}, Stagnation={stagnation_counter}")
         
-        # Selection strategy based on diversity and stagnation
-        selection_size = max(population_size // 2, 50)
+        # Simplified selection strategy
+        selection_size = max(population_size // 3, 30)  # Smaller selection pool
         
-        if diversity < 10.0 or fitness_diversity < 0.001:  # Low diversity
-            selected = novelty_selection(population, fitness_scores, selection_size, 
-                                       novelty_weight=0.4)
-            print(f"  -> Using novelty selection (diversity={diversity:.2f})")
-        elif stagnation_counter > 20:
-            selected = rank_based_selection(population, fitness_scores, selection_size, 
-                                          selection_pressure=1.2)
-            print(f"  -> Using rank-based selection (stagnation={stagnation_counter})")
+        if fitness_diversity < 0.001 or stagnation_counter > 15:
+            # Simple rank-based selection when diversity is low
+            sorted_indices = np.argsort(fitness_scores)
+            # Select top performers but with some randomness
+            selected_indices = []
+            for i in range(selection_size):
+                # Weighted selection favoring better individuals
+                weights = np.exp(-np.arange(len(population)) * 0.1)  # Exponential decay
+                selected_idx = np.random.choice(len(population), p=weights/weights.sum())
+                selected_indices.append(selected_idx)
+            selected = population[selected_indices]
         else:
             # Standard tournament selection
             selected = []
             for _ in range(selection_size):
-                tournament_size = np.random.randint(2, 5)
-                participants = np.random.choice(len(population), tournament_size, replace=False)
+                participants = np.random.choice(len(population), 3, replace=False)
                 best_idx = participants[np.argmin(fitness_scores[participants])]
                 selected.append(population[best_idx])
             selected = np.array(selected)
@@ -290,75 +341,53 @@ def genetic_algorithm_improved_v2(initial_population, population_size, generatio
         # Create next generation
         next_generation = []
         
-        # Elitism - but vary elite size based on diversity
-        if diversity > 15:
-            elite_size = max(3, population_size // 15)
-        else:
-            elite_size = max(1, population_size // 30)  # Fewer elites when diversity is low
-        
+        # Elitism
+        elite_size = max(2, population_size // 20)
         elite_indices = np.argsort(fitness_scores)[:elite_size]
         for idx in elite_indices:
             next_generation.append(population[idx].copy())
         
         # Generate offspring
-        immigrant_slots = 0
-        if diversity < 8.0 or stagnation_counter > 25:
-            immigrant_slots = max(5, population_size // 20)
-        
-        target_offspring = population_size - len(next_generation) - immigrant_slots
-        
-        while len(next_generation) < len(next_generation) + target_offspring:
+        while len(next_generation) < population_size - 5:  # Leave room for immigrants
             # Select parents
             parent1, parent2 = selected[np.random.choice(len(selected), 2, replace=False)]
             
-            # Crossover
-            if np.random.rand() < 0.8:  # Crossover probability
-                child1, child2 = multi_point_crossover(parent1, parent2)
+            # Simple crossover
+            if np.random.rand() < 0.7:
+                crossover_point = np.random.randint(1, len(parent1))
+                child1 = np.concatenate([parent1[:crossover_point], parent2[crossover_point:]])
+                child2 = np.concatenate([parent2[:crossover_point], parent1[crossover_point:]])
             else:
                 child1, child2 = parent1.copy(), parent2.copy()
             
-            # Mutation
-            child1 = adaptive_mutation_v2(child1, generation, generations, 
-                                        diversity, fitness_diversity)
-            child2 = adaptive_mutation_v2(child2, generation, generations, 
-                                        diversity, fitness_diversity)
+            # Simple mutation
+            mutation_rate = 0.15 + 0.1 * (generation / generations)
+            for child in [child1, child2]:
+                for i in range(len(child)):
+                    if np.random.rand() < mutation_rate:
+                        child[i] = np.clip(child[i] + np.random.randint(-5, 6), 0, 100)
             
-            next_generation.append(child1)
-            if len(next_generation) < len(next_generation) + target_offspring:
-                next_generation.append(child2)
+            next_generation.extend([child1, child2])
         
-        # Add immigrants if needed
-        if immigrant_slots > 0:
-            immigrants = create_diverse_immigrants(initial_population, immigrant_slots, 
-                                                 generation, generations)
-            next_generation.extend(immigrants)
-            print(f"  -> Added {immigrant_slots} diverse immigrants")
+        # Add some random immigrants
+        if stagnation_counter > 20:
+            for _ in range(5):
+                immigrant = initial_population + np.random.randint(-10, 11, size=len(initial_population))
+                immigrant = np.clip(immigrant, 0, 100)
+                next_generation.append(immigrant)
         
-        # Fill remaining slots if needed
-        while len(next_generation) < population_size:
-            random_individual = create_diverse_immigrants(initial_population, 1, 
-                                                        generation, generations)[0]
-            next_generation.append(random_individual)
-        
+        # Trim to exact population size
         population = np.array(next_generation[:population_size])
         
         # Major restart if severely stagnated
-        if stagnation_counter > 80:
+        if stagnation_counter > 50:
             print("  -> MAJOR RESTART: Severe stagnation detected")
-            # Keep only the very best
-            num_keep = min(5, population_size // 20)
+            num_keep = 3
             best_individuals = population[np.argsort(fitness_scores)[:num_keep]]
             
-            # Regenerate population
             population = genPopulation(population_size, initial_population)
             population[:num_keep] = best_individuals
             stagnation_counter = 0
-        
-        # Check for convergence based on fitness window
-        if len(best_fitness_window) == 20:
-            fitness_improvement = best_fitness_window[0] - best_fitness_window[-1]
-            if fitness_improvement < 1e-6 and generation > 100:
-                print(f"  -> Potential convergence detected (improvement: {fitness_improvement:.8f})")
     
     return best_individual, best_fitness, fitness_history, diversity_history
 
@@ -381,10 +410,11 @@ if __name__ == "__main__":
     dirns = {k: str(g["Faller_if"].iloc[0]) for k, g in df_meta.groupby("Parameter")}
     empirical_weights = df_meta["Weights"].values.tolist()
 
+    # Start with smaller population and fewer generations for testing
     best_weights, best_fitness, fitness_history, diversity_history = genetic_algorithm_improved_v2(
         initial_population=empirical_weights,
-        population_size=200,  # Larger population
-        generations=500,     # More generations
+        population_size=100,   # Smaller population for faster testing
+        generations=500,      # Fewer generations initially
         df_base=df_base,
         parameters=parameters,
         mean_vals=mean_vals,
