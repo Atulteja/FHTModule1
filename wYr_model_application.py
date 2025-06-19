@@ -26,7 +26,7 @@ st.write("3. **View Results**: After processing, a csv file will be generated co
 
 st.header("Data Selection and Upload")
 st.write("To begin, please select the type of data you want to use for risk assessment. You can select one or more data types to combine for a comprehensive risk assessment:")
-use_ZM = st.checkbox("ZurichMOVE Data", value=True, key="zurichmove")
+use_ZM = st.checkbox("Gait Data", value=True, key="zurichmove")
 use_QN = st.checkbox("Questionnaire Data", value=True, key="questionnaire")
 use_age_fall_history = st.checkbox("Age and Fall History Data", value=True, key="age_fall_history")
 
