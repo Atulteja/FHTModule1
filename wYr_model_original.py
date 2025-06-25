@@ -136,9 +136,11 @@ def f_fall_history_model(paths, num_follow_ups):
 if __name__ == "__main__":
 
     paths = {}
-    paths['ZM'] = "/Volumes/P2/16_Sai_Workfolder/Data_TARGET/Feb2025/TARGETZMParameters_All_20241015.xlsx"
-    paths['Questionnaires'] = "/Volumes/P2/16_Sai_Workfolder/Data_TARGET/Feb2025/TARGET 5 November 2024 dataset to SEC_051124 numeric n=2291.xlsx"
-    paths['Prospective'] = "/Volumes/P2/16_Sai_Workfolder/Data_TARGET/Feb2025/TARGET follow-up 18.02.2025 to SEC 26022025 numeric.xls"
-    paths["Model_information"] = "/Volumes/P2/16_Sai_Workfolder/wYr_model/wYr_thresholds.xlsx"
+    paths['ZM'] = "//1TB/Dataset_Feb2025/TARGETZMParameters_All_20241015.xlsx"
+    paths['Questionnaires'] = "/1TB/Dataset_Feb2025/TARGET 5 November 2024 dataset to SEC_051124 numeric n=2291.xlsx"
+    paths['Prospective'] = "/1TB/Dataset_Feb2025/TARGET follow-up 18.02.2025 to SEC 26022025 numeric.xls"
+    paths["Model_information"] = "/1TB/wYr_model/wYr_thresholds.xlsx"
 
     df, spec, sens, acc, yidx, plr, f1_, aucroc_  = f_fall_history_model(paths, 4)
+
+print(spec, sens, acc, yidx, plr, f1_, aucroc_)
