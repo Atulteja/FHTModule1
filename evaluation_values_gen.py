@@ -7,6 +7,16 @@ import seaborn as sns
 
 from generate_dataset import PROSPECTIVEDATA, QUESTIONNAIREDATA, ZURICHMOVEDATA, DATASET
 
+thresholds_by_config = {
+    "ZM=1_QN=1_AF=1": 64,
+    "ZM=1_QN=1_AF=0": 45,
+    "ZM=1_QN=0_AF=1": 63,
+    "ZM=1_QN=0_AF=0": 54,
+    "ZM=0_QN=1_AF=1": 11,
+    "ZM=0_QN=1_AF=0": 0,
+    "ZM=0_QN=0_AF=1": 7,
+}
+
 # calculate risk score
 def f_riskscore(df, path_model_info, n_std=4):
     parameters, means, stddevs, wts, dirns = f_model_configurations(path_model_info)
@@ -60,13 +70,24 @@ def f_model_configurations(path_model_info):
 
     return parameters, optimum_thresholds_mean, optimum_thresholds_std, wts, dirns
 
-def f_thresholding_predict(df, cutoff=64):
-    df["prediction"] = df["risk score"] >= cutoff
-    df["prediction"].replace({True: 1, False: 0}, inplace=True)
+# def f_thresholding_predict(df, cutoff=64):
+#     df["prediction"] = df["risk score"] >= cutoff
+#     df["prediction"].replace({True: 1, False: 0}, inplace=True)
+#     return df
+
+def f_thresholding_predict(df, use_ZM=False, use_QN=False, use_age_fall_history=False):
+    config_key = f"ZM={int(use_ZM)}_QN={int(use_QN)}_AF={int(use_age_fall_history)}"
+    cutoff = thresholds_by_config.get(config_key)
+    
+    if cutoff is None:
+        raise ValueError(f"Threshold not defined for configuration: {config_key}")
+    
+    df = df.copy()
+    df["prediction"] = (df["risk score"] >= cutoff).astype(int)
     return df
 
-def f_evaluate_predictions(df):
-    df = f_thresholding_predict(df)
+def f_evaluate_predictions(df, use_ZM=False, use_QN=False, use_age_fall_history=False):
+    df = f_thresholding_predict(df, use_ZM=True, use_QN=True, use_age_fall_history=True)
     y_pred = df["prediction"].values
     y_true = df["label"].values
     
@@ -207,7 +228,7 @@ def f_fall_history_model(paths, num_follow_ups):
             print(f"Dataset columns: {list(target.dataset.columns)}")
             
             df = f_riskscore(target.dataset, paths["Model_information"])
-            df, spec, sens, acc, yidx, plr, f1_, aucroc_ = f_evaluate_predictions(df)
+            df, spec, sens, acc, yidx, plr, f1_, aucroc_ = f_evaluate_predictions(df, use_ZM=config["use_ZM"], use_QN=config["use_questionnaire"], use_age_fall_history=config["use_age_and_fall"])
 
             results[config_name] = {
                 "dataset_shape": target.dataset.shape,

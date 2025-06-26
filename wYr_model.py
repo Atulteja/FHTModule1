@@ -8,6 +8,16 @@ import streamlit as st
 
 from generate_dataset import PROSPECTIVEDATA, QUESTIONNAIREDATA, ZURICHMOVEDATA, DATASET
 
+thresholds_by_config = {
+    "ZM=1_QN=1_AF=1": 64,
+    "ZM=1_QN=1_AF=0": 45,
+    "ZM=1_QN=0_AF=1": 63,
+    "ZM=1_QN=0_AF=0": 54,
+    "ZM=0_QN=1_AF=1": 11,
+    "ZM=0_QN=1_AF=0": 0,
+    "ZM=0_QN=0_AF=1": 7,
+}
+
 # calculate risk score
 def f_riskscore(df, df_meta, n_std=4, parameters=None, means=None, stddevs=None, wts=None, dirns=None):
     if parameters is None or means is None or stddevs is None or wts is None or dirns is None:
@@ -53,10 +63,16 @@ def f_model_configurations(df_meta = None):
 
     return parameters, optimum_thresholds_mean, optimum_thresholds_std, wts, dirns
 
-def f_thresholding_predict(df, cutoff=64):
-    df["prediction"] = df["risk score"] >= cutoff
-    df["prediction"].replace({True: 1, False: 0}, inplace=True)
-    return df
+def f_thresholding_predict(df, use_ZM=False, use_QN=False, use_age_fall_history=False):
+    config_key = f"ZM={int(use_ZM)}_QN={int(use_QN)}_AF={int(use_age_fall_history)}"
+    cutoff = thresholds_by_config.get(config_key)
+    
+    if cutoff is None:
+        raise ValueError(f"Threshold not defined for configuration: {config_key}")
+    
+    df = df.copy()
+    df["prediction"] = (df["risk score"] >= cutoff).astype(int)
+    return df, cutoff
 
 def f_evaluate_predictions(df):
     df = f_thresholding_predict(df)
@@ -140,26 +156,6 @@ def f_generate_TARGET_dataset(uploaded_files: dict, use_ZM=False, use_QN=False, 
         st.warning("Please upload the selected data files to proceed.")
 
     return target
-
-    # if num_followups>0 and len(paths['Prospective'])>0:
-    #     # read prospective data
-    #     followup = PROSPECTIVEDATA(paths['Prospective'])
-    #     followup.read_dataset()
-    #     followup.generate_labels(num_followups=num_followups)
-
-    #     # construct the dataset (TARGET) - with followup information
-    #     complete_dataset = DATASET()
-    #     complete_dataset.merge_datasets(target.dataset, followup.labels,
-    #                         {'first_dataset': 'Participant', 'second_dataset': 'Participant'})
-    #     complete_dataset.dataset.dropna(inplace=True)
-
-    #     print("---------------------------")
-    #     print(complete_dataset.dataset.label.value_counts())
-    #     print("---------------------------")
-
-    #     target = complete_dataset
-    # else:
-    #     print("Follow up information not incorporated")
 
 def f_fall_history_model(paths, num_follow_ups):
     target = f_generate_TARGET_dataset(paths, num_follow_ups)

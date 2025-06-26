@@ -75,9 +75,10 @@ st.write("You can then download the updated file for further review or analysis.
 
 if target is not None:
     df_processed = f_riskscore(target.dataset, df_meta, parameters=parameters, means=means, stddevs=stddevs, wts=wts, dirns=dirns)
-    df_processed = f_thresholding_predict(df_processed)
+    df_processed, cutoff = f_thresholding_predict(df_processed, use_ZM=use_ZM, use_QN=use_QN, use_age_fall_history=use_age_fall_history)
 
     st.write("Processed Data:")
+    st.write("Threshold for risk score:", cutoff)
     st.dataframe(df_processed.head())
 
     csv_file = df_processed.to_csv(index=False).encode('utf-8')
