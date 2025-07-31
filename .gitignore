@@ -1,5 +1,7 @@
 requirements.txt
 
+*.png
+
 # Excel and csv files
 *.xls
 *.xlsx

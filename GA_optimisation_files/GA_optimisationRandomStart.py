@@ -1,16 +1,53 @@
+import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn import preprocessing
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import f1_score
+from sklearn.utils import resample
 
-from wYr_model import f_riskscore, f_thresholding_predict, f_evaluate_predictions, f_generate_TARGET_dataset
+sys.path.insert(0, '/1TB/wYr_model') 
 
-def fitness(weights, df_base, parameters, mean_vals, std_vals, dirns, threshold=64, n_std=4):
-    df = df_base.copy()
-    weights = {param: int(w) for param, w in zip(parameters, weights)}
+from wYr_model_original import f_generate_TARGET_dataset
 
+# def fitness(weights, df_base, parameters, mean_vals, std_vals, dirns, threshold=64, n_std=4):
+#     df = df_base.copy()
+#     weights = {param: int(w) for param, w in zip(parameters, weights)}
+
+#     df["risk score"] = 0
+#     for var in parameters:
+#         mean = mean_vals[var]
+#         std = std_vals[var]
+
+#         if dirns[var] == "<":
+#             th_low = mean - (n_std * std)
+#             df["point"] = df[var] < th_low
+#         elif dirns[var] == ">":
+#             th_high = mean + (n_std * std)
+#             df["point"] = df[var] > th_high
+#         elif dirns[var] == "=":
+#             th_high = mean + (n_std * std)
+#             df["point"] = df[var] == th_high
+#         elif dirns[var] == "><":
+#             th_low = max(0, mean - (n_std * std)) if "Var" in var else mean - (n_std * std)
+#             th_high = mean + (n_std * std)
+#             df["point"] = ~df[var].between(th_low, th_high)
+#         else:
+#             df["point"] = 0
+
+#         df["point"] = df["point"].astype(int) * weights[var]
+#         df["risk score"] += df["point"]
+
+#     df.drop(columns=["point"], inplace=True)
+#     df["prediction"] = (df["risk score"] >= threshold).astype(int)
+
+#     return 1 - roc_auc_score(df["label"].values, df["prediction"].values)
+
+def evaluate_weights(df, weights, parameters, mean_vals, std_vals, dirns, threshold=64, n_std=4):
+    """Evaluate the fitness of a set of weights by calculating the risk score and AUC"""
+    df = df.copy()
     df["risk score"] = 0
+
     for var in parameters:
         mean = mean_vals[var]
         std = std_vals[var]
@@ -37,7 +74,35 @@ def fitness(weights, df_base, parameters, mean_vals, std_vals, dirns, threshold=
     df.drop(columns=["point"], inplace=True)
     df["prediction"] = (df["risk score"] >= threshold).astype(int)
 
-    return 1 - roc_auc_score(df["label"].values, df["prediction"].values)
+    return f1_score(df["label"].values, df["prediction"].values)
+
+def fitness(weights, df_base, parameters, mean_vals, std_vals, dirns, threshold=64, n_std=4, penalty_lambda=0.1, n_bootstrap=100):
+    weights = {param: int(w) for param, w in zip(parameters, weights)}
+    weights_vec = np.array([weights[param] for param in parameters])
+    f1s = []
+
+    for i in range(n_bootstrap):
+        if i % 50 == 0:
+            print(f"  Bootstrap iteration {i+1}/{n_bootstrap}")
+
+        df_sample = resample(df_base, replace=True, n_samples=100, random_state=42*i)
+        
+        try:
+            f1 = evaluate_weights(df_sample, weights, parameters, mean_vals, std_vals, dirns, threshold, n_std)
+            if f1 is not None and not np.isnan(f1):
+                f1s.append(f1)
+        except Exception as e:
+            continue
+        
+    if len(f1s) == 0:
+        return 0.0
+    
+    mean_f1 = np.mean(f1s)
+    std_f1 = np.std(f1s)
+    fitness_score = mean_f1/ std_f1
+
+    return max(0, fitness_score)
+
 
 def calculate_diversity(population):
     """Calculate population diversity as average pairwise distance"""
@@ -55,9 +120,7 @@ def calculate_diversity(population):
 def genPopulation(size, empirical_weights):
     population = [empirical_weights.copy()]
     for _ in range(size - 1):
-        # Increase initial diversity with larger random variations
-        new_individual = empirical_weights + np.random.randint(-5, 6, size=len(empirical_weights))
-        new_individual = np.clip(new_individual, 0, 100)
+        new_individual = np.random.randint(0, 101, size=len(empirical_weights))
         population.append(new_individual)
     return np.array(population)
 
@@ -66,7 +129,7 @@ def tournament_selection(population, fitness_scores, num_selected, tournament_si
     selected = []
     for _ in range(num_selected):
         participants = np.random.choice(len(population), tournament_size, replace=False)
-        best_idx = participants[np.argmin(fitness_scores[participants])]
+        best_idx = participants[np.argmax(fitness_scores[participants])]
         selected.append(population[best_idx])
     return np.array(selected)
 
@@ -76,7 +139,7 @@ def diversity_selection(population, fitness_scores, num_selected, diversity_weig
     
     # First, select some based purely on fitness
     fitness_based = int(num_selected * (1 - diversity_weight))
-    best_indices = np.argsort(fitness_scores)[:fitness_based]
+    best_indices = np.argsort(-fitness_scores)[:fitness_based]
     selected_indices.extend(best_indices)
     
     # Then select remaining based on diversity
@@ -124,10 +187,10 @@ def adaptive_mutation(individual, base_mutation_rate, generation, max_generation
     mutated = individual.copy()
     
     # Increase mutation rate when diversity is low
-    diversity_factor = max(1.0, 2.0 - diversity / 10.0)  # Adjust based on your diversity range
+    diversity_factor = max(1.0, 1.5 - diversity / 20.0)  # Adjust based on your diversity range
     
     # Increase mutation rate in later generations
-    generation_factor = 1.0 + (generation / max_generations) * 0.5
+    generation_factor = 1.0 + (generation / max_generations) * 0.3
     
     effective_mutation_rate = base_mutation_rate * diversity_factor * generation_factor
     effective_mutation_rate = min(effective_mutation_rate, 0.5)  # Cap at 50%
@@ -145,7 +208,7 @@ def inject_immigrants(population, empirical_weights, num_immigrants=10):
     """Inject random individuals to maintain diversity"""
     immigrants = []
     for _ in range(num_immigrants):
-        immigrant = empirical_weights + np.random.randint(-9, 10, size=len(empirical_weights))
+        immigrant = np.random.randint(0, 101, size=len(empirical_weights))
         immigrant = np.clip(immigrant, 0, 100)
         immigrants.append(immigrant)
     
@@ -153,31 +216,39 @@ def inject_immigrants(population, empirical_weights, num_immigrants=10):
     return np.array(immigrants)
 
 def genetic_algorithm_improved(initial_population, population_size, generations, base_mutation_rate, 
-                             df_base, parameters, mean_vals, std_vals, dirns, threshold=64):
+                             df_base, parameters, mean_vals, std_vals, dirns, threshold=64, penalty_lambda=1.0, n_bootstrap=100):
     
     population = genPopulation(population_size, initial_population)
     best_individual = None
-    best_fitness = float('inf')
+    best_fitness = float('-inf')
     
     # Track convergence
     fitness_history = []
     diversity_history = []
     stagnation_counter = 0
-    
+    fitness_cache = {}
+    fitness_scores = []   
+
     for generation in range(generations):
-        # Calculate fitness for all individuals
-        fitness_scores = np.array([
-            fitness(ind, df_base, parameters, mean_vals, std_vals, dirns, threshold)
-            for ind in population
-        ])
+        current_fitness_scores = []  # Use a different variable name each generation
+        
+        for i, ind in enumerate(population):
+            key = tuple(ind)
+            if key not in fitness_cache:
+                print(f"Evaluating fitness for individual {i+1}/{len(population)} in generation {generation+1}")
+                fitness_cache[key] = fitness(ind, df_base, parameters, mean_vals, std_vals, dirns, threshold,
+                                    n_std=4, penalty_lambda=penalty_lambda, n_bootstrap=n_bootstrap)
+            current_fitness_scores.append(fitness_cache[key])
+        
+        fitness_scores = np.array(current_fitness_scores)
         
         # Calculate diversity
         diversity = calculate_diversity(population)
         diversity_history.append(diversity)
         
         # Track best individual
-        best_idx = np.argmin(fitness_scores)
-        if fitness_scores[best_idx] < best_fitness:
+        best_idx = np.argmax(fitness_scores)
+        if fitness_scores[best_idx] > best_fitness:
             best_fitness = fitness_scores[best_idx]
             best_individual = population[best_idx].copy()
             stagnation_counter = 0
@@ -187,7 +258,7 @@ def genetic_algorithm_improved(initial_population, population_size, generations,
         fitness_history.append(best_fitness)
         
         print(f"Generation {generation + 1}, Best Fitness: {best_fitness:.6f}, "
-              f"Diversity: {diversity:.2f}, Avg Fitness: {np.mean(fitness_scores):.6f}")
+                f"Diversity: {diversity:.2f}, Avg Fitness: {np.mean(fitness_scores):.6f}")
         
         # Selection - use larger selection pool and diversity-aware selection
         selection_size = max(population_size // 2, 40)
@@ -202,7 +273,7 @@ def genetic_algorithm_improved(initial_population, population_size, generations,
         
         # Elitism - keep best individuals
         elite_size = max(2, population_size // 20)
-        elite_indices = np.argsort(fitness_scores)[:elite_size]
+        elite_indices = np.argsort(-fitness_scores)[:elite_size]
         for idx in elite_indices:
             next_generation.append(population[idx].copy())
         
@@ -246,20 +317,28 @@ def genetic_algorithm_improved(initial_population, population_size, generations,
                 new_individual = initial_population + np.random.randint(-12, 13, size=len(initial_population))
                 population[i] = np.clip(new_individual, 0, 100)
             stagnation_counter = 0
-    
+        
     return best_individual, best_fitness, fitness_history, diversity_history
 
 # Usage remains the same but with the improved function
 if __name__ == "__main__":
     paths = {}
-    paths['ZM'] = "//1TB/Dataset_Feb2025/TARGETZMParameters_All_20241015.xlsx"
-    paths['Questionnaires'] = "/1TB/Dataset_Feb2025/TARGET 5 November 2024 dataset to SEC_051124 numeric n=2291.xlsx"
-    paths['Prospective'] = "/1TB/Dataset_Feb2025/TARGET follow-up 18.02.2025 to SEC 26022025 numeric.xls"
+    paths['ZM'] = "/1TB/wYr_model/wYr_datasets/training_ZM.xlsx"
+    paths['Questionnaires'] = "/1TB/wYr_model/wYr_datasets/training_questionnaire.xlsx"
+    paths['Prospective'] = "/1TB/wYr_model/wYr_datasets/training_followup.xlsx"
     paths["Model_information"] = "/1TB/wYr_model/wYr_thresholds.xlsx"
 
     # Load once
     target = f_generate_TARGET_dataset(paths, 4)
     df_base = target.dataset.copy()
+    df_majority = df_base[df_base["label"] == 0]
+    df_minority = df_base[df_base["label"] == 1]
+    df_majority_downsampled = resample(df_majority, 
+                                       replace=False,
+                                       n_samples=len(df_minority),
+                                       random_state=42)
+    df_balanced = pd.concat([df_majority_downsampled, df_minority])
+    df_balanced = df_balanced.sample(frac=1, random_state=42).reset_index(drop=True)
 
     df_meta = pd.read_excel(paths['Model_information'], sheet_name="Thresholds")
     parameters = df_meta["Parameter"].values.tolist()
@@ -268,18 +347,30 @@ if __name__ == "__main__":
     dirns = {k: str(g["Faller_if"].iloc[0]) for k, g in df_meta.groupby("Parameter")}
     empirical_weights = df_meta["Weights"].values.tolist()
 
+    results = []
+
+
     best_weights, best_fitness, fitness_history, diversity_history = genetic_algorithm_improved(
         initial_population=empirical_weights,
-        population_size=200,  # Increased population size
-        generations=400,
-        base_mutation_rate=0.20,  # Slightly reduced base rate since it's now adaptive
-        df_base=df_base,
+        population_size=200,
+        generations=200,
+        base_mutation_rate=0.15,
+        df_base=df_balanced,
         parameters=parameters,
         mean_vals=mean_vals,
         std_vals=std_vals,
         dirns=dirns,
-        threshold=64
+        threshold=64,
+        penalty_lambda=0.1,
+        n_bootstrap=50,
     )
 
+    results.append(( best_fitness, best_weights))
+    print(f"Best Fitness: {best_fitness:.4f}")
+
+    best_result = max(results, key=lambda x: x[1])
+    best_fitness, best_weights = best_result
+
+    print("\n=============================")
+    print(f"Best Fitness: {best_fitness:.4f}")
     print("Best Weights:", best_weights)
-    print("Best Fitness:", best_fitness)

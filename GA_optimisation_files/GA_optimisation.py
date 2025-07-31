@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn import preprocessing
 from sklearn.metrics import roc_auc_score
 
-from wYr_model import f_riskscore, f_thresholding_predict, f_evaluate_predictions, f_generate_TARGET_dataset
+from wYr_model_application_files.wYr_model import f_riskscore, f_thresholding_predict, f_evaluate_predictions, f_generate_TARGET_dataset
 
 def fitness(weights, df_base, parameters, mean_vals, std_vals, dirns, threshold=64, n_std=4):
     df = df_base.copy()

@@ -1,7 +1,10 @@
+import sys
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
+
+sys.path.insert(0, '/1TB/wYr_model')
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -42,7 +45,7 @@ if not use_ZM:
     gait_keywords = ["Var_StepLengthLeft", "Var_StepLengthRight", "Var_StepTimeL", "Var_StepTimeR", "Var_StrideTimeL", "Var_StrideTimeR", "Var_strLengthL", "Var_strLengthR", "Var_SwingTimeL", "Var_SwingTimeR", "Var_Dls", "Avg_GaitSpeed"]
     df_meta.loc[df_meta["Parameter"].str.contains('|'.join(gait_keywords), regex=True), "Weights"] = 0
 if not use_QN:
-    questionnaire_keywords = ["ICONFES_Score_Adjusted", "IPAQ_Cat"]
+    questionnaire_keywords = ["ICONFES_Score_Adjusted", "IPAQ_Cat", "MOCA_Score_Adjusted"]
     df_meta.loc[df_meta["Parameter"].str.contains('|'.join(questionnaire_keywords), regex=True), "Weights"] = 0
 if not use_age_fall_history:
     age_fall_history_keywords = ["Age", "Fall_2"]
@@ -74,14 +77,51 @@ st.write("Once uploaded, the system will process the data and calculate a risk s
 st.write("You can then download the updated file for further review or analysis.")
 
 if target is not None:
+    missing_cols = []
+
+    # Check expected questionnaire columns
+    if use_QN or use_age_fall_history:
+        expected_qn_cols = ["Participant", "ICONFES_Score_Adjusted", "IPAQ_Cat", "MOCA_Score_Adjusted"]
+        for col in expected_qn_cols:
+            if col not in target.dataset.columns:
+                missing_cols.append(col)
+
+    # Check expected gait columns
+    if use_ZM:
+        expected_gait_cols = ["Participant", "Var_StepLengthLeft", "Var_StepLengthRight", "Var_StepTimeL", "Var_StepTimeR", 
+                              "Var_StrideTimeL", "Var_StrideTimeR", "Var_strLengthL", "Var_strLengthR", 
+                              "Var_SwingTimeL", "Var_SwingTimeR", "Var_Dls", "Avg_GaitSpeed"]
+        for col in expected_gait_cols:
+            if col not in target.dataset.columns:
+                missing_cols.append(col)
+
+    # Check expected age & fall history columns
+    if use_age_fall_history:
+        expected_af_cols = ["Age", "Fall_2"]
+        for col in expected_af_cols:
+            if col not in target.dataset.columns:
+                missing_cols.append(col)
+
+    if missing_cols:
+        st.info(f"The following expected columns were not found in the uploaded data: {', '.join(missing_cols)}")
+        for col in missing_cols:
+            df_meta.loc[df_meta["Parameter"] == col, "Weights"] = 0
+
+if target is not None:
     df_processed = f_riskscore(target.dataset, df_meta, parameters=parameters, means=means, stddevs=stddevs, wts=wts, dirns=dirns)
     df_processed, cutoff = f_thresholding_predict(df_processed, use_ZM=use_ZM, use_QN=use_QN, use_age_fall_history=use_age_fall_history)
 
+    active_params = df_meta[df_meta["Weights"] > 0]["Parameter"].tolist()
+    keep_cols = ["Participant", 'risk score', 'prediction'] + active_params
+    keep_cols = [col for col in keep_cols if col in df_processed.columns]
+
+    df_final = df_processed[keep_cols]
+
     st.write("Processed Data:")
     st.write("Threshold for risk score:", cutoff)
-    st.dataframe(df_processed.head())
+    st.dataframe(df_final.head())
 
-    csv_file = df_processed.to_csv(index=False).encode('utf-8')
+    csv_file = df_final.to_csv(index=False).encode('utf-8')
     st.download_button("Download Processed Data", data=csv_file, file_name="processed_data.csv", mime="text/csv")
 
 
@@ -106,7 +146,7 @@ def plot_bar(metrics_dict, config_label):
     plt.tight_layout()
     return fig
 
-df_eval = pd.read_excel("Evaluation_metrics.xlsx", sheet_name="Sheet1")
+df_eval = pd.read_excel("/1TB/wYr_model/Evaluation_metrics.xlsx", sheet_name="Sheet1")
 
 config_key = f"ZM={int(use_ZM)}_QN={int(use_QN)}_AF={int(use_age_fall_history)}"
 

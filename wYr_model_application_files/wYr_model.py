@@ -41,6 +41,11 @@ def f_riskscore(df, df_meta, n_std=4, parameters=None, means=None, stddevs=None,
             if "Var" in var and th_low < 0:
                 th_low = 0
             th_high = mean_vals + (n_std * stddevs[var])
+            print(f"Checking column: {var}")
+            print(df[var].apply(type).value_counts())
+
+            mask_bad = df[var].apply(lambda x: isinstance(x, str))
+            print(df.loc[mask_bad, ["Participant", var]])
             df["point"] = ~df[var].between(th_low, th_high)
         else:
             print("Error")
@@ -98,11 +103,10 @@ def f_evaluate_predictions(df):
     aucroc_ = roc_auc_score(y_true, y_pred)
     return df, spec, sens, acc, yidx, plr, f1_, aucroc_
 
-def f_generate_TARGET_dataset(uploaded_files: dict, use_ZM=False, use_QN=False, use_age_fall_history=False):
+def f_generate_TARGET_dataset(cleaned_df: dict, use_ZM=False, use_QN=False, use_age_fall_history=False):
     
-    #Flags
-    has_ZM = 'ZM' in uploaded_files and uploaded_files['ZM'] is not None
-    has_QN = 'Questionnaire' in uploaded_files and uploaded_files['Questionnaire'] is not None
+    has_ZM = 'ZM' in cleaned_df and cleaned_df['ZM'] is not None
+    has_QN = 'Questionnaire' in cleaned_df and cleaned_df['Questionnaire'] is not None
 
     # Validate inputs
     if not (has_ZM or has_QN):
@@ -114,33 +118,30 @@ def f_generate_TARGET_dataset(uploaded_files: dict, use_ZM=False, use_QN=False, 
 
     # Read ZM data
     if use_ZM and has_ZM:
-        zm = ZURICHMOVEDATA(uploaded_files['ZM'])
-        zm.read_dataset()
-        df_ZM = zm.dataset
+        df_ZM = cleaned_df['ZM']
         print('ZM dataset - shape:', df_ZM.shape)
 
     # Read questionnaire data
-    if use_QN and use_age_fall_history and has_QN:
-        questionnaire = QUESTIONNAIREDATA(
-            uploaded_files['Questionnaire'],
-            features=['Fall_2', 'Age', 'ICONFES_Score_Adjusted', 'IPAQ_Cat', 'MOCA_Score_Adjusted']
-        )
-    elif use_QN and has_QN and not use_age_fall_history:
-        questionnaire = QUESTIONNAIREDATA(
-            uploaded_files['Questionnaire'],
-            features=['ICONFES_Score_Adjusted', 'IPAQ_Cat', 'MOCA_Score_Adjusted']
-        )
-    elif use_age_fall_history and has_QN and not use_QN:
-        questionnaire = QUESTIONNAIREDATA(
-            uploaded_files['Questionnaire'],
-            features=['Fall_2', 'Age']
-        )
-    else: 
-        questionnaire = None
+    # if use_QN and use_age_fall_history and has_QN:
+    #     questionnaire = QUESTIONNAIREDATA(
+    #         cleaned_df['Questionnaire'],
+    #         features=['Fall_2', 'Age', 'ICONFES_Score_Adjusted', 'IPAQ_Cat', 'MOCA_Score_Adjusted']
+    #     )
+    # elif use_QN and has_QN and not use_age_fall_history:
+    #     questionnaire = QUESTIONNAIREDATA(
+    #         cleaned_df['Questionnaire'],
+    #         features=['ICONFES_Score_Adjusted', 'IPAQ_Cat', 'MOCA_Score_Adjusted']
+    #     )
+    # elif use_age_fall_history and has_QN and not use_QN:
+    #     questionnaire = QUESTIONNAIREDATA(
+    #         cleaned_df['Questionnaire'],
+    #         features=['Fall_2', 'Age']
+    #     )
+    # else: 
+    #     questionnaire = None
 
-    if questionnaire is not None:    
-        questionnaire.read_dataset()
-        df_QN = questionnaire.dataset
+    if use_QN and has_QN:    
+        df_QN = cleaned_df['Questionnaire']
         print('Questionnaire dataset - shape:', df_QN.shape)
 
     # Merge datasets

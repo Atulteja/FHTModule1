@@ -1,5 +1,5 @@
 import pandas as pd
-from wYr_model import f_thresholding_predict, f_generate_TARGET_dataset
+from wYr_model_application_files.wYr_model import f_thresholding_predict, f_generate_TARGET_dataset
 from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 import matplotlib.pyplot as plt
 import numpy as np
